@@ -1,0 +1,91 @@
+package main
+
+import (
+	"log"
+	"strings"
+
+	"github.com/jmoiron/sqlx"
+	_ "github.com/jackc/pgx/v4/stdlib" // 导入 pgx 驱动
+)
+
+// --- 配置 ---
+const (
+	// 请替换为您的数据库连接字符串
+	// 格式: "postgres://user:password@host:port/dbname?sslmode=disable"
+	DATABASE_URL = "postgres://kline:c75scFhGrbie@localhost:5432/kline?sslmode=disable"
+)
+
+func main() {
+	log.Println("Starting database schema setup...")
+
+	// 1. 连接数据库
+	db, err := sqlx.Connect("pgx", DATABASE_URL)
+	if err != nil {
+		log.Fatalf("FATAL: 无法连接到数据库 (%s)。请检查 DATABASE_URL。", err)
+	}
+	defer db.Close()
+
+	log.Println("成功连接到数据库，开始执行 SQL 脚本...")
+
+	// 2. 逐个执行 SQL 语句
+	statements := []string{
+		// 启用 TimescaleDB 扩展
+		"CREATE EXTENSION IF NOT EXISTS timescaledb",
+
+		// 创建 K 线表
+		`CREATE TABLE IF NOT EXISTS klines (
+			start_time TIMESTAMPTZ NOT NULL,
+			symbol TEXT NOT NULL,
+			timeframe TEXT NOT NULL,
+			open DOUBLE PRECISION,
+			high DOUBLE PRECISION,
+			low DOUBLE PRECISION,
+			close DOUBLE PRECISION,
+			volume BIGINT
+		)`,
+
+		// 添加唯一约束
+		`DO $$ 
+		BEGIN
+			IF NOT EXISTS (
+				SELECT 1 FROM pg_constraint 
+				WHERE conname = 'klines_unique_constraint'
+			) THEN
+				ALTER TABLE klines
+				ADD CONSTRAINT klines_unique_constraint 
+				UNIQUE (symbol, timeframe, start_time);
+			END IF;
+		END $$`,
+
+		// 转换为 TimescaleDB Hypertable
+		"SELECT create_hypertable('klines', 'start_time', if_not_exists => TRUE)",
+
+		// 创建索引
+		"CREATE INDEX IF NOT EXISTS klines_idx_api ON klines (symbol, timeframe, start_time DESC)",
+	}
+
+	for i, stmt := range statements {
+		sql := strings.TrimSpace(stmt)
+		if sql == "" {
+			continue
+		}
+
+		log.Printf("执行语句 %d...", i+1)
+		_, err := db.Exec(sql)
+		if err != nil {
+			// 忽略一些常见的非致命错误
+			if strings.Contains(err.Error(), "already exists") ||
+				strings.Contains(err.Error(), "already a hypertable") {
+				log.Printf("警告: %v (忽略)", err)
+				continue
+			}
+			log.Fatalf("FATAL: 执行 SQL 失败 (第 %d 条语句): %v\nSQL: %s", i+1, err, sql)
+		}
+		log.Printf("✓ 语句 %d 执行成功", i+1)
+	}
+
+	log.Println("========================================")
+	log.Println("✅ 数据库表和 TimescaleDB 扩展设置成功！")
+	log.Println("========================================")
+	log.Println("现在您可以启动 DB Writer 和 Aggregator 服务了。")
+}

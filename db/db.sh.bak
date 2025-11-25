@@ -1,0 +1,7 @@
+# 生成随机密码并创建
+docker exec -it timescaledb-pg18 psql -U postgres -c "CREATE USER kline WITH PASSWORD 'c75scFhGrbie';" && \
+docker exec -it timescaledb-pg18 psql -U postgres -c "CREATE DATABASE kline OWNER kline;" && \
+docker exec -it timescaledb-pg18 psql -U postgres -d kline -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" && \
+docker exec -it timescaledb-pg18 psql -U postgres -d kline -c "GRANT ALL PRIVILEGES ON DATABASE kline TO kline;" && \
+docker exec -it timescaledb-pg18 psql -U postgres -d kline -c "GRANT ALL ON SCHEMA public TO kline;" && \
+echo "连接字符串: postgresql://kline:$KLINE_PASSWORD@localhost:5432/kline"
